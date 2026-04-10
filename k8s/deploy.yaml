@@ -1,22 +1,21 @@
-# 1. CRIAÇÃO DO VOLUME (Onde os dados serão salvos)
+# ==========================================
+# 1. APLICAÇÃO (SIMPLE-API)
+# ==========================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: simple-api-pvc
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
 ---
-# 2. DEPLOYMENT DO APP (O "Corpo" da aplicação)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: simple-api
-  labels:
-    app: simple-api
 spec:
   replicas: 4
   selector:
@@ -32,13 +31,7 @@ spec:
         image: alexandrephilippusneto/simple-api:latest
         ports:
         - containerPort: 5687
-
-        # Montagem do volume dentro do container
-        volumeMounts:
-        - name: storage-volume
-          mountPath: /app/data
-
-        # Configurações de Recursos (Evita o "Noisy Neighbor")
+        # LIMITES DE RECURSOS PARA O APP
         resources:
           requests:
             memory: "64Mi"
@@ -46,28 +39,14 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "500m"
-
-        # Verificações de Saúde (Probes)
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 5687
-          initialDelaySeconds: 15
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 5687
-          initialDelaySeconds: 10
-          periodSeconds: 5
-
-      # Vinculação do container com o PVC criado acima
+        volumeMounts:
+        - name: storage-volume
+          mountPath: /app/data
       volumes:
       - name: storage-volume
         persistentVolumeClaim:
           claimName: simple-api-pvc
 ---
-# 3. SERVICE NODEPORT (Acesso via navegador/externo)
 apiVersion: v1
 kind: Service
 metadata:
@@ -78,6 +57,188 @@ spec:
     app: simple-api
   ports:
     - protocol: TCP
-      port: 5687        # Porta interna do Service
-      targetPort: 5687   # Porta do seu App (container)
-      nodePort: 30001    # Porta que você vai abrir no seu IP/Localhost
+      port: 5687
+      targetPort: 5687
+      nodePort: 30001
+---
+# ==========================================
+# 2. NODE EXPORTER (Lê CPU/RAM da Máquina)
+# ==========================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:latest
+        ports:
+          - containerPort: 9100
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+spec:
+  selector:
+    app: node-exporter
+  ports:
+    - port: 9100
+      targetPort: 9100
+---
+# ==========================================
+# 3. PROMETHEUS
+# ==========================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+    scrape_configs:
+      - job_name: 'node_exporter'
+        static_configs:
+          - targets: ['node-exporter:9100']
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+          - "--config.file=/etc/prometheus/prometheus.yml"
+          - "--storage.tsdb.path=/prometheus"
+        ports:
+        - containerPort: 9090
+        # LIMITES DE RECURSOS PARA O PROMETHEUS
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/prometheus
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  type: ClusterIP
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+---
+# ==========================================
+# 4. GRAFANA
+# ==========================================
+# 1. PROVIDER (O "mapa" que diz ao Grafana para ler a pasta)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: 'Simple-api'
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+
+# 2. SEU DEPLOYMENT DO GRAFANA ATUALIZADO
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.2.3
+        ports:
+          - containerPort: 3000
+        env:
+          - name: GF_SECURITY_ADMIN_USER
+            value: admin
+          - name: GF_SECURITY_ADMIN_PASSWORD
+            value: admin
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+          - name: datasources
+            mountPath: /etc/grafana/provisioning/datasources
+          # ADICIONE ESTE MOUNT DO PROVIDER
+          - name: dashboard-provider
+            mountPath: /etc/grafana/provisioning/dashboards
+          - name: dashboards
+            mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        # ADICIONE ESTE VOLUME DO PROVIDER
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboard-json
