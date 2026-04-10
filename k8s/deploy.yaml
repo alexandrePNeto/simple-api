@@ -105,6 +105,17 @@ spec:
 # 3. PROMETHEUS
 # ==========================================
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi # Espaço suficiente para os logs do lab
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
@@ -137,9 +148,9 @@ spec:
         args:
           - "--config.file=/etc/prometheus/prometheus.yml"
           - "--storage.tsdb.path=/prometheus"
+          - "--storage.tsdb.retention.time=1d"
         ports:
         - containerPort: 9090
-        # LIMITES DE RECURSOS PARA O PROMETHEUS
         resources:
           requests:
             memory: "256Mi"
@@ -150,10 +161,16 @@ spec:
         volumeMounts:
         - name: config-volume
           mountPath: /etc/prometheus
+        # 2. MONTAR O VOLUME NO CONTAINER
+        - name: storage-volume
+          mountPath: /prometheus
       volumes:
       - name: config-volume
         configMap:
           name: prometheus-config
+      - name: storage-volume
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
 ---
 apiVersion: v1
 kind: Service
