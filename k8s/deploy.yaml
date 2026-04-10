@@ -197,21 +197,71 @@ data:
       "title": "Monitoramento da Máquina (Node)",
       "uid": "node-monitor",
       "refresh": "5s",
+      "schemaVersion": 38,
       "panels": [
         {
           "type": "stat",
           "title": "Uso de CPU %",
-          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "targets": [{ "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode='idle'}[2m])) * 100)", "refId": "A" }]
+          "targets": [{ "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode='idle'}[2m])) * 100)", "refId": "A" }],
+          "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 90 }] } } }
         },
         {
           "type": "stat",
           "title": "Memória em Uso",
-          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": { "defaults": { "unit": "bytes" } },
           "targets": [{ "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "refId": "A" }]
+        },
+        {
+          "type": "stat",
+          "title": "Tempo Online (Uptime)",
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "targets": [{ "expr": "time() - node_boot_time_seconds", "refId": "A" }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Tráfego de Rede (Entrada/Saída)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "bps" } },
+          "targets": [
+            { "expr": "sum(rate(node_network_receive_bytes_total[2m]))", "legendFormat": "Download", "refId": "A" },
+            { "expr": "sum(rate(node_network_transmit_bytes_total[2m]))", "legendFormat": "Upload", "refId": "B" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "I/O de Disco (Leitura/Escrita)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "Bps" } },
+          "targets": [
+            { "expr": "sum(rate(node_disk_read_bytes_total[2m]))", "legendFormat": "Leitura", "refId": "A" },
+            { "expr": "sum(rate(node_disk_written_bytes_total[2m]))", "legendFormat": "Escrita", "refId": "B" }
+          ]
+        },
+        {
+          "type": "gauge",
+          "title": "Uso de Disco %",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 95 }] }
+            }
+          },
+          "targets": [{
+            "expr": "100 - ((sum(node_filesystem_avail_bytes{device=~\"/dev/.*\", mountpoint!~\"/var/lib/kubelet.*\"}) * 100) / sum(node_filesystem_size_bytes{device=~\"/dev/.*\", mountpoint!~\"/var/lib/kubelet.*\"}))",
+            "refId": "A"
+          }]
         }
       ]
     }
@@ -241,7 +291,7 @@ spec:
           - name: GF_SECURITY_ADMIN_USER
             value: admin
           - name: GF_SECURITY_ADMIN_PASSWORD
-            value: admin
+            value: admin123
         resources:
           requests:
             memory: "128Mi"
